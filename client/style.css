@@ -119,3 +119,7 @@ button.ghost { background: transparent; color: var(--muted); }
 .tag.off { background: color-mix(in srgb, var(--bad) 25%, transparent); color: var(--bad); }
 .net-banner { position: fixed; top: 0; left: 50%; transform: translateX(-50%); background: var(--bad); color: #fff; padding: 8px 18px; border-radius: 0 0 10px 10px; font-size: 14px; z-index: 20; }
 .net-banner[hidden] { display: none; }
+
+.top { gap: 12px; }
+.sfx-toggle { margin-left: auto; padding: 4px 10px; font-size: 12px; background: transparent; border: 1px solid #2d3245; color: var(--muted, #9aa); border-radius: 999px; cursor: pointer; }
+.sfx-toggle:hover { color: #fff; }

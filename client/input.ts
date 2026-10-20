@@ -18,6 +18,11 @@ function current(): Dir | null {
   return held.length ? held[held.length - 1] : null;
 }
 
+/** 当前按住的方向（渲染时用来即时显示朝向，不影响服务器权威） */
+export function heldDir(): Dir | null {
+  return active ? current() : null;
+}
+
 /** 只在方向变化时发送；系统按键重复（e.repeat）不会重复发送 */
 function send(force = false) {
   const d = current();

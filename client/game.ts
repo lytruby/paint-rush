@@ -1,4 +1,6 @@
 import { GRID_SIZE as N, TICK_HZ, type RoomInfo, type Snapshot } from "../shared/protocol";
+import { heldDir } from "./input";
+import { sfx } from "./sfx";
 
 const CELL = 32;
 const TICK_MS = 1000 / TICK_HZ;
@@ -30,11 +32,32 @@ export class GameView {
   onSnapshot(s: Snapshot) {
     if (this.cur && s.tick <= this.cur.tick) return;
     const now = performance.now();
-    if (this.cur) for (let i = 0; i < s.grid.length; i++) if (s.grid[i] !== this.cur.grid[i]) this.changedAt[i] = now;
+    const mySlot = this.me ? this.slotOf(this.me) : 0;
+    let painted = false, stole = false;
+    if (this.cur) {
+      for (let i = 0; i < s.grid.length; i++) {
+        if (s.grid[i] === this.cur.grid[i]) continue;
+        this.changedAt[i] = now;
+        if (s.grid[i] === mySlot) {
+          if (this.cur.grid[i] === 0) painted = true;
+          else stole = true;
+        }
+      }
+    }
+    if (s.status === "playing" && this.cur?.status === "playing") {
+      if (stole) sfx.steal();
+      else if (painted) sfx.paint();
+      const sec = Math.ceil(s.remainingMs / 1000);
+      if (sec <= 10 && sec !== this.lastHurry) {
+        this.lastHurry = sec;
+        sfx.hurry();
+      }
+    }
     this.prev = this.cur;
     this.cur = s;
     this.curAt = now;
   }
+  private lastHurry = 0;
 
   latest() {
     return this.cur;
@@ -117,10 +140,24 @@ export class GameView {
       roundRect(ctx, cx - 13, cy - 13, 26, 26, 7);
       ctx.fill();
       ctx.stroke();
-      // 眼睛
+      // 眼睛：己方角色的眼睛立刻看向按住的方向（本地即时反馈，不等服务器回包）
+      const look = p.id === this.me ? heldDir() : null;
+      const ex = look === "left" ? -3 : look === "right" ? 3 : 0;
+      const ey = look === "up" ? -3 : look === "down" ? 3 : 0;
       ctx.fillStyle = DARK[slot];
-      ctx.fillRect(cx - 7, cy - 4, 4, 6);
-      ctx.fillRect(cx + 3, cy - 4, 4, 6);
+      ctx.fillRect(cx - 7 + ex, cy - 4 + ey, 4, 6);
+      ctx.fillRect(cx + 3 + ex, cy - 4 + ey, 4, 6);
+      if (look) {
+        // 按住方向的一侧亮起一个小箭头
+        const [dx, dy] = look === "left" ? [-1, 0] : look === "right" ? [1, 0] : look === "up" ? [0, -1] : [0, 1];
+        const ax = cx + dx * 19, ay = cy + dy * 19;
+        ctx.fillStyle = "rgba(255,255,255,.85)";
+        ctx.beginPath();
+        ctx.moveTo(ax + dx * 5, ay + dy * 5);
+        ctx.lineTo(ax - dy * 5 - dx * 2, ay + dx * 5 - dy * 2);
+        ctx.lineTo(ax + dy * 5 - dx * 2, ay - dx * 5 - dy * 2);
+        ctx.fill();
+      }
       if (p.id === this.me) {
         ctx.fillStyle = "#fff";
         ctx.beginPath();

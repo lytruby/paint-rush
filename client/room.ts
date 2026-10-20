@@ -2,6 +2,7 @@ import { ROUND_MS, type ErrorCode, type OverPayload, type PlayerPublic, type Roo
 import { GameView, rememberPlayers, roster } from "./game";
 import { AUTOJOIN_KEY } from "./home";
 import { setInputPhase } from "./input";
+import { sfx } from "./sfx";
 import { socket } from "./net";
 import { $, esc, getName, hideOverlay, setName, showOverlay, toast, view } from "./ui";
 
@@ -111,6 +112,7 @@ socket.on("snapshot", (s) => {
 socket.on("over", (o) => {
   if (!cur?.me) return;
   cur.over = o;
+  if (cur.room?.status !== "ended") sfx.result(o.winnerId === null ? "draw" : o.winnerId === cur.me ? "win" : "lose");
   if (cur.room?.status === "ended") render(cur.room);
 });
 
@@ -289,6 +291,8 @@ function runCountdown(room: RoomInfo) {
     const txt = rem > 0 ? String(Math.ceil(rem / 1000)) : "开始！";
     if (txt !== last) {
       last = txt;
+      if (rem > 0) sfx.count();
+      else sfx.go();
       el.textContent = txt;
       el.classList.remove("pop");
       void el.offsetWidth; // 重新触发动画

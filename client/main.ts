@@ -1,3 +1,4 @@
+import { sfx } from "./sfx";
 import { renderHome } from "./home";
 import { socket } from "./net";
 import { enterRoom, leaveRoom } from "./room";
@@ -40,3 +41,13 @@ socket.on("disconnect", () => setNet("bad", "连接中断，正在重连…"));
 socket.on("connect_error", () => setNet("bad", "连接失败，正在重试…"));
 
 route();
+
+// 音效开关（状态存在 localStorage）
+const sfxBtn = document.getElementById("sfxToggle") as HTMLButtonElement;
+const paintSfx = () => (sfxBtn.textContent = `音效：${sfx.isOn() ? "开" : "关"}`);
+sfxBtn.onclick = () => {
+  sfx.toggle();
+  paintSfx();
+  sfxBtn.blur(); // 避免空格/方向键作用在按钮上
+};
+paintSfx();
