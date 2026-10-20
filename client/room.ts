@@ -1,5 +1,7 @@
-import type { ErrorCode, PlayerPublic, RoomInfo, RoomQueryRes } from "../shared/protocol";
+import { ROUND_MS, type ErrorCode, type OverPayload, type PlayerPublic, type RoomInfo, type RoomQueryRes } from "../shared/protocol";
+import { GameView } from "./game";
 import { AUTOJOIN_KEY } from "./home";
+import { setInputPhase } from "./input";
 import { socket } from "./net";
 import { $, esc, getName, hideOverlay, setName, showOverlay, toast, view } from "./ui";
 
@@ -9,6 +11,8 @@ interface RoomState {
   room: RoomInfo | null;
   countdownEnd: number; // performance.now() 基准
   raf: number;
+  game: GameView;
+  over: OverPayload | null;
 }
 
 let cur: RoomState | null = null;
@@ -22,7 +26,8 @@ const goHome = () => {
 
 export async function enterRoom(code: string, navigate: (path: string) => void) {
   nav = navigate;
-  cur = { code, me: null, room: null, countdownEnd: 0, raf: 0 };
+  cur?.game.unmount();
+  cur = { code, me: null, room: null, countdownEnd: 0, raf: 0, game: new GameView(), over: null };
   document.title = `房间 ${code} · 抢地盘`;
   view.innerHTML = `<section class="card"><p class="muted">正在进入房间 ${esc(code)}…</p></section>`;
 
@@ -60,6 +65,8 @@ export function leaveRoom() {
   if (!cur) return;
   if (cur.me) socket.emit("leave");
   cancelAnimationFrame(cur.raf);
+  cur.game.unmount();
+  setInputPhase("lobby");
   cur = null;
 }
 
@@ -91,6 +98,16 @@ socket.on("room", (r) => {
   render(r);
 });
 
+socket.on("snapshot", (s) => {
+  if (cur?.me) cur.game.onSnapshot(s);
+});
+
+socket.on("over", (o) => {
+  if (!cur?.me) return;
+  cur.over = o;
+  if (cur.room?.status === "ended") render(cur.room);
+});
+
 socket.on("error", (e) => {
   if (!cur) return;
   if (e.code === "ROOM_NOT_FOUND" || e.code === "ROOM_FULL") showRoomError(e.code);
@@ -111,11 +128,12 @@ function render(room: RoomInfo) {
   const prevStatus = cur.room?.status;
   cur.room = room;
   cancelAnimationFrame(cur.raf);
+  setInputPhase(room.status);
 
-  if (room.status === "lobby") renderLobby(room);
-  else if (room.status === "countdown") renderCountdown(room);
-  else if (room.status === "playing") renderPlaying(room);
-  else view.innerHTML = `<section class="card"><p class="muted">结算（阶段 3 实现）</p></section>`;
+  if (room.status === "lobby") {
+    cur.game.unmount();
+    renderLobby(room);
+  } else renderGame(room);
 
   if (prevStatus && prevStatus !== "lobby" && room.status === "lobby") toast("对手离开了，已回到大厅");
 }
@@ -166,12 +184,58 @@ function renderLobby(room: RoomInfo) {
   $<HTMLButtonElement>("#leave").onclick = goHome;
 }
 
-function renderCountdown(room: RoomInfo) {
+// ---- 对局视图：倒计时 / 对局中 / 结算 共用同一块棋盘 ----
+function hudSide(room: RoomInfo, slot: 1 | 2) {
+  const p = room.players.find((x) => x.slot === slot);
+  const name = p ? esc(p.name) + (p.id === cur?.me ? "（你）" : "") : "—";
+  const off = p && !p.connected ? `<span class="state off">掉线中</span>` : "";
+  const pct = `<b class="pct" id="pct${slot}">0%</b>`;
+  return slot === 1
+    ? `<div class="hp p1"><span class="swatch"></span><span class="pname">${name}</span>${off}${pct}</div>`
+    : `<div class="hp p2">${pct}${off}<span class="pname">${name}</span><span class="swatch"></span></div>`;
+}
+
+function resultHtml(room: RoomInfo, over: OverPayload | null) {
+  if (!over) return `<div class="banner"><h2>结算中…</h2></div>`;
+  const me = cur?.me;
+  const title = over.winnerId === null ? "平局！" : over.winnerId === me ? "你赢了！" : "你输了";
+  const cls = over.winnerId === null ? "draw" : over.winnerId === me ? "win" : "lose";
+  const reason = over.reason === "opponent_left" ? "对手离开了对局" : "时间到";
+  const rows = over.scores
+    .map((s) => {
+      const p = room.players.find((x) => x.id === s.id);
+      return `<div class="srow p${p?.slot ?? 1}"><span class="swatch"></span><span class="pname">${esc(p?.name ?? "已离开")}</span><b>${s.pct}%</b><span class="muted">${s.cells} 格</span></div>`;
+    })
+    .join("");
+  return `<div class="banner ${cls}"><p class="muted">${reason}</p><h2>${title}</h2>${rows}</div>`;
+}
+
+function renderGame(room: RoomInfo) {
+  const st = cur!;
+  let overlay = "";
+  if (room.status === "countdown") overlay = `<div class="num" id="cd"></div><p>第 ${room.round} 局 · 方向键 / WASD 移动</p>`;
+  if (room.status === "ended") overlay = resultHtml(room, st.over);
+
   view.innerHTML = `
-    <section class="card">
-      ${playersBar(room)}
-      <div class="countdown"><div class="num" id="cd"></div><p class="muted">第 ${room.round} 局即将开始</p></div>
+    <section class="card game ${room.status}">
+      <div class="hud">${hudSide(room, 1)}<div class="timer" id="timer">${Math.round(ROUND_MS / 1000)}</div>${hudSide(room, 2)}</div>
+      <div class="bar"><span class="b1" id="bar1"></span><span class="b2" id="bar2"></span></div>
+      <div class="board" id="board">
+        <canvas></canvas>
+        <div class="board-overlay ${overlay ? "show" : ""}">${overlay}</div>
+      </div>
+      <div class="actions-row">
+        <span class="muted hint">方向键 / WASD 移动，走过的格子会染成你的颜色</span>
+        <button id="leave" class="ghost">${room.status === "ended" ? "返回首页" : "离开对局"}</button>
+      </div>
     </section>`;
+  st.game.mount($(".card.game"), room, st.me);
+  $<HTMLButtonElement>("#leave").onclick = goHome;
+  if (room.status === "ended") $("#timer").textContent = "0";
+  if (room.status === "countdown") runCountdown(room);
+}
+
+function runCountdown(room: RoomInfo) {
   const st = cur!;
   st.countdownEnd = performance.now() + room.phaseRemainingMs;
   const el = $("#cd");
@@ -189,14 +253,4 @@ function renderCountdown(room: RoomInfo) {
     if (rem > -500) st.raf = requestAnimationFrame(tick);
   };
   tick();
-}
-
-function renderPlaying(room: RoomInfo) {
-  view.innerHTML = `
-    <section class="card">
-      ${playersBar(room)}
-      <div class="countdown"><div class="num">开始！</div><p class="muted">对局画面会在阶段 3 实现</p></div>
-      <button id="leave" class="ghost">离开房间</button>
-    </section>`;
-  $<HTMLButtonElement>("#leave").onclick = goHome;
 }

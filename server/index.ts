@@ -17,6 +17,7 @@ import {
   checkJoin,
   checkStart,
   createRoom,
+  hooks,
   normalizeCode,
   removePlayer,
   rooms,
@@ -26,6 +27,7 @@ import {
   toInfo,
   type Room,
 } from "./rooms.js";
+import { handleInput, snapshot } from "./game.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 const isProd = process.env.NODE_ENV === "production";
@@ -85,6 +87,13 @@ function broadcastRoom(room: Room) {
   io.to(room.code).emit("room", toInfo(room));
 }
 
+hooks.room = broadcastRoom;
+hooks.snapshot = (room) => io.to(room.code).emit("snapshot", snapshot(room));
+hooks.over = (room, over) => {
+  io.to(room.code).emit("over", over);
+  console.log(`[room ${room.code}] round ${room.round} over: ${JSON.stringify(over.scores)} winner=${over.winnerId}`);
+};
+
 function sendError(socket: IOSocket, code: ErrorCode) {
   socket.emit("error", { code, msg: ERROR_MSG[code] });
 }
@@ -132,8 +141,14 @@ io.on("connection", (socket: IOSocket) => {
     if (!room || !socket.data.playerId) return sendError(socket, "BAD_REQUEST");
     const err = checkStart(room, socket.data.playerId);
     if (err) return sendError(socket, err);
-    startCountdown(room, broadcastRoom);
+    startCountdown(room);
     console.log(`[room ${room.code}] countdown round ${room.round}`);
+  });
+
+  socket.on("input", (payload) => {
+    const room = currentRoom(socket);
+    const player = room?.players.find((p) => p.id === socket.data.playerId);
+    if (room && player) handleInput(room, player, payload);
   });
 
   socket.on("leave", () => leaveCurrentRoom(socket));

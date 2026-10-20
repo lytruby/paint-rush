@@ -5,7 +5,7 @@ export const PROTOCOL_VERSION = 1;
 
 // ---- 游戏常量 ----
 export const GRID_SIZE = 16; // 16×16 网格
-export const TICK_HZ = 12; // 服务器 tick 频率
+export const TICK_HZ = 10; // 服务器 tick 频率；每 tick 最多走一格，即移动速度 10 格/秒
 export const ROUND_MS = 60_000; // 每局 60 秒
 export const COUNTDOWN_MS = 3_000; // 开局 3-2-1
 export const RECONNECT_GRACE_MS = 15_000; // 掉线保留座位 15 秒

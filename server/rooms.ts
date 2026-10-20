@@ -2,14 +2,19 @@
 import { randomBytes } from "node:crypto";
 import {
   COUNTDOWN_MS,
+  GRID_SIZE,
   MAX_PLAYERS,
   NAME_MAX_LEN,
   ROOM_EMPTY_TTL_MS,
   ROUND_MS,
+  TICK_HZ,
+  type Dir,
   type ErrorCode,
+  type OverPayload,
   type RoomInfo,
   type RoomStatus,
 } from "../shared/protocol.js";
+import { computeOver, initRound, step } from "./game.js";
 
 export interface Player {
   id: string;
@@ -18,6 +23,14 @@ export interface Player {
   slot: 1 | 2;
   socketId: string;
   connected: boolean;
+  // ---- 对局状态 ----
+  x: number;
+  y: number;
+  dir: Dir | null; // 当前按住的方向
+  pressed: Dir | null; // 本 tick 内按下过的方向（保证短按至少走一格）
+  lastSeq: number; // 已处理的最大输入序号
+  rateWindowStart: number;
+  rateCount: number;
 }
 
 export interface Room {
@@ -30,7 +43,18 @@ export interface Room {
   phaseEndsAt: number; // 当前阶段结束的服务器时间戳，0 表示无
   emptySince: number | null;
   timer: NodeJS.Timeout | null;
+  loop: NodeJS.Timeout | null; // 对局 tick 循环
+  grid: Uint8Array; // 0 = 无人，1/2 = slot
+  tick: number;
+  lastOver: OverPayload | null;
 }
+
+/** 状态变化的广播出口，由 index.ts 注入（避免房间逻辑依赖 Socket.IO） */
+export const hooks = {
+  room: (_room: Room) => {},
+  snapshot: (_room: Room) => {},
+  over: (_room: Room, _over: OverPayload) => {},
+};
 
 // 去掉易混淆字符 I/O/0/1
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -53,6 +77,10 @@ export function createRoom(): Room {
     phaseEndsAt: 0,
     emptySince: Date.now(), // 创建后无人加入，同样按空房间规则回收
     timer: null,
+    loop: null,
+    grid: new Uint8Array(GRID_SIZE * GRID_SIZE),
+    tick: 0,
+    lastOver: null,
   };
   rooms.set(code, room);
   return room;
@@ -76,7 +104,21 @@ export function checkJoin(room: Room | undefined): ErrorCode | null {
 
 export function addPlayer(room: Room, socketId: string, name: string): Player {
   const slot: 1 | 2 = room.players.some((p) => p.slot === 1) ? 2 : 1;
-  const player: Player = { id: randomId(6), token: randomId(16), name, slot, socketId, connected: true };
+  const player: Player = {
+    id: randomId(6),
+    token: randomId(16),
+    name,
+    slot,
+    socketId,
+    connected: true,
+    x: 0,
+    y: 0,
+    dir: null,
+    pressed: null,
+    lastSeq: 0,
+    rateWindowStart: 0,
+    rateCount: 0,
+  };
   room.players.push(player);
   room.players.sort((a, b) => a.slot - b.slot);
   if (!room.players.some((p) => p.id === room.hostId)) room.hostId = player.id;
@@ -109,25 +151,50 @@ export function checkStart(room: Room, playerId: string): ErrorCode | null {
   return null;
 }
 
-/** 进入 3-2-1 倒计时，结束后进入对局（对局逻辑在阶段 3 实现） */
-export function startCountdown(room: Room, onChange: (room: Room) => void) {
+/** 进入 3-2-1 倒计时（期间显示棋盘和出生点），结束后进入对局 */
+export function startCountdown(room: Room) {
   clearTimer(room);
   room.status = "countdown";
   room.round += 1;
   room.rematchVotes.clear();
   room.phaseEndsAt = Date.now() + COUNTDOWN_MS;
-  onChange(room);
+  initRound(room);
+  hooks.room(room);
+  hooks.snapshot(room);
   room.timer = setTimeout(() => {
     room.timer = null;
-    room.status = "playing";
-    room.phaseEndsAt = Date.now() + ROUND_MS;
-    onChange(room);
+    startPlaying(room);
   }, COUNTDOWN_MS);
+}
+
+/** 对局：固定频率 tick，每个 tick 推进一步并广播全量快照；时间到即结算 */
+function startPlaying(room: Room) {
+  room.status = "playing";
+  room.phaseEndsAt = Date.now() + ROUND_MS;
+  hooks.room(room);
+  hooks.snapshot(room);
+  room.loop = setInterval(() => {
+    step(room);
+    if (Date.now() >= room.phaseEndsAt) finishRound(room, "time");
+    else hooks.snapshot(room);
+  }, 1000 / TICK_HZ);
+}
+
+export function finishRound(room: Room, reason: OverPayload["reason"]) {
+  clearTimer(room);
+  room.status = "ended";
+  room.phaseEndsAt = 0;
+  room.lastOver = computeOver(room, reason);
+  hooks.snapshot(room); // 最终棋盘
+  hooks.over(room, room.lastOver);
+  hooks.room(room);
 }
 
 export function clearTimer(room: Room) {
   if (room.timer) clearTimeout(room.timer);
+  if (room.loop) clearInterval(room.loop);
   room.timer = null;
+  room.loop = null;
 }
 
 export function toInfo(room: Room): RoomInfo {

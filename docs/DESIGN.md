@@ -15,6 +15,7 @@
 **开发期变更记录**
 
 - 阶段 1：重连凭证 token 从 localStorage 改为 **sessionStorage**（按标签页隔离，刷新后仍保留）。原因：面试官很可能在同一个浏览器里开两个标签页自测，如果用 localStorage，两个标签页会共用同一个 token，第二个标签页会把第一个挤掉。昵称仍存 localStorage。
+- 阶段 3：tick 从 12 Hz 改为 10 Hz（移动速度为每秒 10 格）；短按也至少走一格；碰撞规则对双方对称；倒计时期间就显示棋盘和出生点。
 - 阶段 2：`room` 消息增加 `phaseRemainingMs` 字段（倒计时和对局的剩余毫秒数），用于两端同步倒计时；错误码增加 `NOT_READY`（人没到齐时点开始）；通过邀请链接进入时，先显示"加入房间"确认卡片（可以修改昵称）。
 
 ---
@@ -145,7 +146,7 @@
 |---|---|---|
 | `joined` | `{ playerId, token, room }` | 只发给本人 |
 | `room` | `{ code, status, hostId, players[], round, rematchVotes[], phaseRemainingMs }` | 元数据变化时广播；phaseRemainingMs 为当前阶段剩余毫秒数 |
-| `snapshot` | `{ tick, status, remainingMs, players[{id,x,y,connected}], grid }` | 每秒 12 次全量广播；客户端丢弃 tick 较旧的快照 |
+| `snapshot` | `{ tick, status, remainingMs, players[{id,x,y,connected}], grid }` | 每秒 10 次全量广播（倒计时开始和结算时各补发一次）；客户端丢弃 tick 较旧的快照 |
 | `over` | `{ scores[{id,cells,pct}], winnerId \| null, reason: 'time' \| 'opponent_left' }` | 结算；winnerId 为 null 表示平局 |
 | `error` | `{ code, msg }` | 错误码：`ROOM_NOT_FOUND` / `ROOM_FULL` / `NOT_HOST` / `NOT_READY` / `BAD_REQUEST` |
 
@@ -154,7 +155,7 @@
 | 问题 | 处理方式 |
 |---|---|
 | 状态由谁决定 | 服务器决定一切；客户端只负责渲染和发送意图 |
-| 延迟 | 服务器以 12 Hz 的固定 tick 推进；客户端对角色位置做插值，让移动看起来平滑 |
+| 延迟 | 服务器以 10 Hz 的固定 tick 推进；客户端对角色位置做插值，让移动看起来平滑 |
 | 重复操作 | 按 seq 去重；每个 tick 每人最多移动一格，连续按键不会加速 |
 | 乱序 | 丢弃 seq 较旧的输入和 tick 较旧的快照；由于每次发的都是全量快照，丢包后下一帧会自动恢复 |
 | 作弊 | 客户端无法提交坐标或分数；服务器校验越界、碰撞和移动速度；对输入限流 |
@@ -241,4 +242,4 @@
 
 3. **真实网络下的手感**
    - 风险：纯服务器权威的方案在高延迟下会有明显的操作迟滞。
-   - 对策：P0 阶段先用插值并把 tick 提到 12 Hz；如果公网测试发现手感差，收尾阶段优先做本地预测。
+   - 对策：P0 阶段先用插值，tick 定为 10 Hz（12 Hz 在 16×16 棋盘上移动太快）；如果公网测试发现手感差，收尾阶段优先做本地预测。
