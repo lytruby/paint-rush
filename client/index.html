@@ -7,15 +7,12 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <main id="app">
-      <h1>抢地盘 <small>Paint Rush</small></h1>
-      <p class="rule">60 秒内走过的格子染成你的颜色，占地多者获胜。</p>
-      <section class="conn" id="conn">
-        <div><span class="dot" id="dot"></span><span id="status">连接中…</span></div>
-        <div>传输方式：<b id="transport">-</b></div>
-        <div>在线连接数：<b id="online">-</b></div>
-      </section>
-    </main>
+    <header class="top">
+      <a href="/" class="logo" id="logo"><span class="p1">抢</span><span class="p2">地</span>盘 <small>Paint Rush</small></a>
+      <span class="net" id="net"><span class="dot"></span><span class="txt">连接中…</span></span>
+    </header>
+    <main id="view"></main>
+    <div class="overlay" id="overlay" hidden></div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

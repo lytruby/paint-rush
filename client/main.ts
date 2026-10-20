@@ -1,24 +1,40 @@
-import { io, type Socket } from "socket.io-client";
-import type { ClientToServerEvents, ServerToClientEvents } from "../shared/protocol";
+import { renderHome } from "./home";
+import { socket } from "./net";
+import { enterRoom, leaveRoom } from "./room";
+import { hideOverlay } from "./ui";
 
-// 阶段 1：只验证联通性——显示连接状态、传输方式（应升级为 websocket）和在线连接数
-const $ = (id: string) => document.getElementById(id)!;
-
-const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io();
-
-function setStatus(text: string, ok: boolean | null) {
-  $("status").textContent = text;
-  $("dot").className = "dot" + (ok === true ? " ok" : ok === false ? " bad" : "");
+// ---- 路由：只有 / 和 /r/:code ----
+function route() {
+  hideOverlay();
+  const m = location.pathname.match(/^\/r\/([A-Za-z0-9]{4,8})\/?$/);
+  if (m) enterRoom(m[1].toUpperCase(), navigate);
+  else renderHome(navigate);
 }
 
-socket.on("connect", () => {
-  setStatus(`已连接（${socket.id}）`, true);
-  const engine = socket.io.engine;
-  $("transport").textContent = engine.transport.name;
-  engine.once("upgrade", () => ($("transport").textContent = engine.transport.name));
+function navigate(path: string) {
+  if (location.pathname !== path) history.pushState(null, "", path);
+  route();
+}
+
+window.addEventListener("popstate", () => {
+  leaveRoom();
+  route();
 });
 
-socket.on("disconnect", () => setStatus("连接断开，正在重连…", false));
-socket.on("connect_error", () => setStatus("连接失败，正在重试…", false));
-socket.on("hello", (p) => ($("online").textContent = String(p.online)));
-socket.on("presence", (p) => ($("online").textContent = String(p.online)));
+document.getElementById("logo")!.addEventListener("click", (e) => {
+  e.preventDefault();
+  leaveRoom();
+  navigate("/");
+});
+
+// ---- 右上角连接状态 ----
+const net = document.getElementById("net")!;
+const setNet = (cls: string, txt: string) => {
+  net.className = `net ${cls}`;
+  net.querySelector(".txt")!.textContent = txt;
+};
+socket.on("connect", () => setNet("ok", "已连接"));
+socket.on("disconnect", () => setNet("bad", "连接中断，正在重连…"));
+socket.on("connect_error", () => setNet("bad", "连接失败，正在重试…"));
+
+route();

@@ -17,7 +17,7 @@ export const NAME_MAX_LEN = 12;
 // ---- 基础类型 ----
 export type Dir = "up" | "down" | "left" | "right";
 export type RoomStatus = "lobby" | "countdown" | "playing" | "ended";
-export type ErrorCode = "ROOM_NOT_FOUND" | "ROOM_FULL" | "NOT_HOST" | "BAD_REQUEST";
+export type ErrorCode = "ROOM_NOT_FOUND" | "ROOM_FULL" | "NOT_HOST" | "NOT_READY" | "BAD_REQUEST";
 
 export interface PlayerPublic {
   id: string;
@@ -33,6 +33,9 @@ export interface RoomInfo {
   players: PlayerPublic[];
   round: number;
   rematchVotes: string[];
+  // 当前阶段（倒计时/对局）剩余毫秒数，按服务器发出时刻计算；客户端用"收到时刻 + 剩余"推算结束时间，
+  // 避免依赖两端时钟一致。lobby / ended 时为 0。
+  phaseRemainingMs: number;
 }
 
 export interface Snapshot {

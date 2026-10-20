@@ -12,7 +12,8 @@
     "build": "vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "accept:2": "tsx scripts/accept-stage2.ts"
   },
   "dependencies": {
     "express": "^4.21.2",
