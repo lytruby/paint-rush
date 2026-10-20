@@ -61,15 +61,19 @@ async function main() {
   const a0 = me(A), b0 = me(B, B.last!);
 
   // 1) 移动 + 互相看到
+  // 注意：公网 RTT 可能达到数百毫秒，所以用"等到位移出现（超时 3 秒）"代替固定等待
   send(A, "right"); send(B, "left");
-  await sleep(600);
+  await waitFor(() => me(A).x > a0.x + 2 && me(B, B.last!).x < b0.x - 2, 3000);
   send(A, null); send(B, null);
-  await sleep(250);
+  await sleep(800);
   const a1 = me(A), b1 = me(B, B.last!);
   check("A 向右移动", a1.x > a0.x, `x ${a0.x}→${a1.x}`);
   check("B 向左移动", b1.x < b0.x, `x ${b0.x}→${b1.x}`);
-  const aSeenByB = B.last!.players.find((p) => p.id === A.id)!;
-  check("B 看到的 A 位置 = A 自己的位置（实时互见）", aSeenByB.x === a1.x && aSeenByB.y === a1.y);
+  // 两端最新帧可能不是同一 tick（公网延迟），取双方都收到的最新一帧比较
+  const tMax = Math.max(...[...A.snaps.keys()].filter((t) => B.snaps.has(t)));
+  const aSelf = A.snaps.get(tMax)!.players.find((p) => p.id === A.id)!;
+  const aSeenByB = B.snaps.get(tMax)!.players.find((p) => p.id === A.id)!;
+  check("B 看到的 A 位置 = A 自己的位置（同一 tick 比较，实时互见）", aSeenByB.x === aSelf.x && aSeenByB.y === aSelf.y && aSelf.x > a0.x, `tick ${tMax} A(${aSelf.x},${aSelf.y})`);
 
   // 2) 两端同一 tick 的快照完全一致
   const common = [...A.snaps.keys()].filter((t) => B.snaps.has(t));
@@ -99,9 +103,10 @@ async function main() {
   A.s.emit("input", { seq: 10000, dir: "left" });
   A.s.emit("input", { seq: 9999, dir: "right" });
   A.s.emit("input", { seq: 10000, dir: "down" });
-  await sleep(350);
-  send(A, null);
+  await waitFor(() => me(A).x !== p5.x || me(A).y !== p5.y, 3000);
   await sleep(200);
+  send(A, null);
+  await sleep(800);
   const p6 = me(A);
   check("乱序旧包和重复包被丢弃（只按 left 移动）", p6.x < p5.x && p6.y === p5.y, `(${p5.x},${p5.y})→(${p6.x},${p6.y})`);
 
@@ -110,11 +115,15 @@ async function main() {
   send(B, rb.y > ra.y ? "up" : "down");
   await waitFor(() => me(B, B.last!).y === me(A).y, 3000);
   send(B, null);
-  await sleep(150);
-  send(A, "right"); send(B, "left");
+  await sleep(800);
+  // 按实际相对位置决定"相向"方向（高延迟下 B 可能对齐到 A 的左边）
+  const aLeft = me(A).x < me(B, B.last!).x;
+  send(A, aLeft ? "right" : "left"); send(B, aLeft ? "left" : "right");
   await sleep(2200);
   const ca = me(A), cb = me(B, B.last!);
-  check("相向而行最终被挡住、相邻停下（不重叠）", ca.y === cb.y && Math.abs(ca.x - cb.x) === 1, `A(${ca.x},${ca.y}) B(${cb.x},${cb.y})`);
+  // 间隔 1 格时双方都想进同一格 → 双方都被挡（对称规则），所以最终间距为 1 或 2
+  const gap = Math.abs(ca.x - cb.x);
+  check("相向而行最终互相挡住停下（间距 1 或 2，不重叠）", ca.y === cb.y && (gap === 1 || gap === 2), `A(${ca.x},${ca.y}) B(${cb.x},${cb.y})`);
   send(A, null); send(B, null);
 
   // 7) 越界：A 一直向上走 2 秒
