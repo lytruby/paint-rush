@@ -15,6 +15,7 @@
 **开发期变更记录**
 
 - 阶段 1：重连凭证 token 从 localStorage 改为 **sessionStorage**（按标签页隔离，刷新后仍保留）。原因：面试官很可能在同一个浏览器里开两个标签页自测，如果用 localStorage，两个标签页会共用同一个 token，第二个标签页会把第一个挤掉。昵称仍存 localStorage。
+- 阶段 2：`room` 消息增加 `phaseRemainingMs` 字段（倒计时和对局的剩余毫秒数），用于两端同步倒计时；错误码增加 `NOT_READY`（人没到齐时点开始）；通过邀请链接进入时，先显示"加入房间"确认卡片（可以修改昵称）。
 
 ---
 
@@ -143,10 +144,10 @@
 | 事件 | 载荷 | 说明 |
 |---|---|---|
 | `joined` | `{ playerId, token, room }` | 只发给本人 |
-| `room` | `{ status, hostId, players[], round, rematchVotes[] }` | 元数据变化时广播 |
+| `room` | `{ code, status, hostId, players[], round, rematchVotes[], phaseRemainingMs }` | 元数据变化时广播；phaseRemainingMs 为当前阶段剩余毫秒数 |
 | `snapshot` | `{ tick, status, remainingMs, players[{id,x,y,connected}], grid }` | 每秒 12 次全量广播；客户端丢弃 tick 较旧的快照 |
 | `over` | `{ scores[{id,cells,pct}], winnerId \| null, reason: 'time' \| 'opponent_left' }` | 结算；winnerId 为 null 表示平局 |
-| `error` | `{ code, msg }` | 错误码：`ROOM_NOT_FOUND` / `ROOM_FULL` / `NOT_HOST` |
+| `error` | `{ code, msg }` | 错误码：`ROOM_NOT_FOUND` / `ROOM_FULL` / `NOT_HOST` / `NOT_READY` / `BAD_REQUEST` |
 
 ### 4.4 同步与反作弊
 
@@ -210,7 +211,7 @@
 | 客户端 | Vite、原生 TypeScript、Canvas 2D | 视图很少，不需要引入框架 |
 | 共享代码 | `shared/` 目录 | 存放协议类型和常量，前后端共用 |
 | 音效（P1） | Web Audio API | 不需要额外的素材文件 |
-| 部署 | **已确定：Render**（新加坡区域，免费套餐，单实例，push 到 main 自动部署），地址 https://paint-rush.onrender.com | 平台必须支持 WebSocket 长连接，不能用 Vercel 这类 serverless 平台。如果选择会休眠的免费套餐，要在提交前唤醒服务，并在 README 中说明首次访问可能需要等待 |
+| 部署 | **已确定：Render**（新加坡区域，免费套餐，单实例，每个阶段推送后手动触发部署），地址 https://paint-rush.onrender.com | 平台必须支持 WebSocket 长连接，不能用 Vercel 这类 serverless 平台。如果选择会休眠的免费套餐，要在提交前唤醒服务，并在 README 中说明首次访问可能需要等待 |
 
 ---
 
