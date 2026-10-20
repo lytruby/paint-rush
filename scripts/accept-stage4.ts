@@ -73,11 +73,14 @@ async function main() {
   await waitFor(() => (pos(A)?.x ?? 0) >= 5, 3000);
   A.s.emit("input", { seq: ++A.seq, dir: null });
   await sleep(800);
-  const before = pos(A)!;
   const aId = A.id, aToken = A.token, aSlot = peer(A, A.id)!.slot;
   A.s.close(); // 相当于刷新页面（旧连接断开）
   const sawOffline = await waitFor(() => peer(B, aId)?.connected === false, 3000);
   check('对局中 A 刷新：B 看到 A "掉线中"', sawOffline);
+  // 掉线后服务器会清空该座位的方向，角色不能再动；从 B 的视角取此后的位置作为基准
+  // （高延迟下 A 断开前可能还有一步在路上，所以不能用 A 断开前最后看到的位置）
+  await sleep(500);
+  const before = pos(B, aId)!;
   A = await joinAs(code, "A", aToken);
   check("A 带 token 重新进入，回到原座位（同一 playerId 和颜色）", A.id === aId && peer(A, aId)?.slot === aSlot);
   check("重连后直接回到对局中视图（status=playing）", A.room?.status === "playing");
@@ -85,8 +88,9 @@ async function main() {
   const after = pos(A)!;
   check("重连后位置不变（角色停在原地）", after.x === before.x && after.y === before.y, `(${before.x},${before.y}) → (${after.x},${after.y})`);
   check("B 看到 A 恢复在线", await waitFor(() => peer(B, aId)?.connected === true, 3000));
-  A.s.emit("input", { seq: 1, dir: "down" }); // 新连接的 seq 从 1 开始，必须被接受
-  const moved = await waitFor(() => (pos(A)?.y ?? 0) > after.y, 3000);
+  // 新连接的 seq 从 1 开始，必须被接受。向上走：A 一直在第 7 行，B 的出生点在 A 右下方，向下可能被 B 挡住
+  A.s.emit("input", { seq: 1, dir: "up" });
+  const moved = await waitFor(() => (pos(A)?.y ?? 99) < after.y, 3000);
   A.s.emit("input", { seq: 2, dir: null });
   A.seq = 2;
   check("刷新后可以继续操作（新连接的 seq 从 1 开始被接受）", moved);

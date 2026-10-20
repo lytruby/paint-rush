@@ -113,7 +113,8 @@ async function main() {
   // 6) 碰撞：把两人移到同一行，相向而行
   const ra = me(A), rb = me(B, B.last!);
   send(B, rb.y > ra.y ? "up" : "down");
-  await waitFor(() => me(B, B.last!).y === me(A).y, 3000);
+  const aligned = await waitFor(() => me(B, B.last!).y === me(A).y, 5000);
+  if (!aligned) console.log(`  （B 未能在 5 秒内走到 A 所在的行：A(${me(A).x},${me(A).y}) B(${me(B, B.last!).x},${me(B, B.last!).y})）`);
   send(B, null);
   await sleep(800);
   // 按实际相对位置决定"相向"方向（高延迟下 B 可能对齐到 A 的左边）
