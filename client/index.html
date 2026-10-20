@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>抢地盘 Paint Rush</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <h1>抢地盘 <small>Paint Rush</small></h1>
+      <p class="rule">60 秒内走过的格子染成你的颜色，占地多者获胜。</p>
+      <section class="conn" id="conn">
+        <div><span class="dot" id="dot"></span><span id="status">连接中…</span></div>
+        <div>传输方式：<b id="transport">-</b></div>
+        <div>在线连接数：<b id="online">-</b></div>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
