@@ -17,7 +17,8 @@ export const NAME_MAX_LEN = 12;
 // ---- 基础类型 ----
 export type Dir = "up" | "down" | "left" | "right";
 export type RoomStatus = "lobby" | "countdown" | "playing" | "ended";
-export type ErrorCode = "ROOM_NOT_FOUND" | "ROOM_FULL" | "NOT_HOST" | "NOT_READY" | "BAD_REQUEST";
+// REPLACED：同一座位在另一个连接（例如复制的标签页）上恢复了，旧连接被踢出
+export type ErrorCode = "ROOM_NOT_FOUND" | "ROOM_FULL" | "NOT_HOST" | "NOT_READY" | "BAD_REQUEST" | "REPLACED";
 
 export interface PlayerPublic {
   id: string;

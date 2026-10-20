@@ -111,3 +111,11 @@ button.ghost { background: transparent; color: var(--muted); }
 .srow b { font-size: 20px; }
 .actions-row { display: flex; justify-content: space-between; align-items: center; }
 .hint { font-size: 13px; }
+
+/* ---- 生命周期 ---- */
+.rematch { margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.rematch p { max-width: 260px; font-size: 13px; }
+.tag.ready { background: color-mix(in srgb, var(--ok) 25%, transparent); color: var(--ok); }
+.tag.off { background: color-mix(in srgb, var(--bad) 25%, transparent); color: var(--bad); }
+.net-banner { position: fixed; top: 0; left: 50%; transform: translateX(-50%); background: var(--bad); color: #fff; padding: 8px 18px; border-radius: 0 0 10px 10px; font-size: 14px; z-index: 20; }
+.net-banner[hidden] { display: none; }

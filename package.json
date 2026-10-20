@@ -15,7 +15,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "accept:2": "tsx scripts/accept-stage2.ts",
     "accept:3": "tsx scripts/accept-stage3.ts",
-    "latency": "tsx scripts/latency.ts"
+    "latency": "tsx scripts/latency.ts",
+    "accept:4": "tsx scripts/accept-stage4.ts"
   },
   "dependencies": {
     "express": "^4.21.2",

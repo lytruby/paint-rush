@@ -5,6 +5,7 @@ import {
   GRID_SIZE,
   MAX_PLAYERS,
   NAME_MAX_LEN,
+  RECONNECT_GRACE_MS,
   ROOM_EMPTY_TTL_MS,
   ROUND_MS,
   TICK_HZ,
@@ -18,11 +19,13 @@ import { computeOver, initRound, step } from "./game.js";
 
 export interface Player {
   id: string;
-  token: string; // 私密重连凭证（阶段 4 使用）
+  token: string; // 私密重连凭证，只发给本人
   name: string;
   slot: 1 | 2;
   socketId: string;
   connected: boolean;
+  disconnectedAt: number | null;
+  graceTimer: NodeJS.Timeout | null; // 掉线保留计时器，到期视为离开
   // ---- 对局状态 ----
   x: number;
   y: number;
@@ -102,7 +105,7 @@ export function checkJoin(room: Room | undefined): ErrorCode | null {
   return null;
 }
 
-export function addPlayer(room: Room, socketId: string, name: string): Player {
+function addPlayer(room: Room, socketId: string, name: string): Player {
   const slot: 1 | 2 = room.players.some((p) => p.slot === 1) ? 2 : 1;
   const player: Player = {
     id: randomId(6),
@@ -111,6 +114,8 @@ export function addPlayer(room: Room, socketId: string, name: string): Player {
     slot,
     socketId,
     connected: true,
+    disconnectedAt: null,
+    graceTimer: null,
     x: 0,
     y: 0,
     dir: null,
@@ -123,24 +128,86 @@ export function addPlayer(room: Room, socketId: string, name: string): Player {
   room.players.sort((a, b) => a.slot - b.slot);
   if (!room.players.some((p) => p.id === room.hostId)) room.hostId = player.id;
   room.emptySince = null;
+  // 中途加入：如果房间停在结算页（上一个对手已离开），就回到大厅，和新对手重新开始
+  if (room.status === "ended") {
+    room.status = "lobby";
+    room.rematchVotes.clear();
+    room.lastOver = null;
+  }
   return player;
 }
 
+export type JoinResult =
+  | { ok: true; player: Player; resumed: boolean; replacedSocketId: string | null }
+  | { ok: false; error: ErrorCode };
+
 /**
- * 移除玩家。
- * 阶段 2 的简化规则：任何时候有人离开或断线都直接移除；如果不在大厅，就取消当前阶段并回到大厅。
- * 阶段 4 会改为"掉线保留 15 秒 + 对局中离开则提前结算"。
+ * 加入或重连（唯一入口）：
+ * - token 匹配房间里的某个座位：恢复该座位（刷新 / 掉线重连），位置和分数都保留；
+ *   如果旧连接还在，返回 replacedSocketId，由调用方踢掉旧连接
+ * - 否则按新玩家处理：房间满员则拒绝
+ */
+export function joinRoom(room: Room | undefined, socketId: string, name: string, token: unknown): JoinResult {
+  if (!room) return { ok: false, error: "ROOM_NOT_FOUND" };
+  const existing = typeof token === "string" ? room.players.find((p) => p.token === token) : undefined;
+  if (existing) {
+    const replacedSocketId = existing.connected && existing.socketId !== socketId ? existing.socketId : null;
+    if (existing.graceTimer) clearTimeout(existing.graceTimer);
+    existing.graceTimer = null;
+    existing.socketId = socketId;
+    existing.connected = true;
+    existing.disconnectedAt = null;
+    // 新连接的客户端 seq 从 1 重新开始，必须重置，否则刷新后的输入会全部被当成旧包丢弃
+    existing.lastSeq = 0;
+    existing.dir = null;
+    existing.pressed = null;
+    return { ok: true, player: existing, resumed: true, replacedSocketId };
+  }
+  const err = checkJoin(room);
+  if (err) return { ok: false, error: err };
+  return { ok: true, player: addPlayer(room, socketId, name), resumed: false, replacedSocketId: null };
+}
+
+/** 掉线：保留座位 RECONNECT_GRACE_MS，角色停在原地；超时视为离开 */
+export function markDisconnected(room: Room, playerId: string) {
+  const p = room.players.find((x) => x.id === playerId);
+  if (!p || !p.connected) return;
+  p.connected = false;
+  p.disconnectedAt = Date.now();
+  p.dir = null;
+  p.pressed = null;
+  p.graceTimer = setTimeout(() => {
+    p.graceTimer = null;
+    if (!p.connected && room.players.includes(p)) {
+      removePlayer(room, p.id);
+      hooks.room(room);
+    }
+  }, RECONNECT_GRACE_MS);
+  hooks.room(room);
+}
+
+/**
+ * 移除玩家（主动离开或掉线超时）。按当前阶段处理：
+ * - 大厅：释放座位
+ * - 倒计时 / 对局中：立即结算，剩下的一方以 opponent_left 获胜（离开者的分数也会出现在结算里）
+ * - 结算页：清空再来一局的投票
+ * 房主离开时，剩下的一方自动成为房主。
  */
 export function removePlayer(room: Room, playerId: string) {
+  const leaving = room.players.find((p) => p.id === playerId);
+  if (!leaving) return;
+  if (leaving.graceTimer) clearTimeout(leaving.graceTimer);
+  leaving.graceTimer = null;
+
+  if (room.status === "countdown" || room.status === "playing") {
+    const winner = room.players.find((p) => p.id !== playerId);
+    finishRound(room, "opponent_left", winner?.id ?? null);
+  }
+
   room.players = room.players.filter((p) => p.id !== playerId);
-  room.rematchVotes.delete(playerId);
+  room.rematchVotes.clear();
   if (room.hostId === playerId) room.hostId = room.players[0]?.id ?? ""; // 房主转移给剩下的人
   if (room.players.length === 0) room.emptySince = Date.now();
-  if (room.status !== "lobby") {
-    clearTimer(room);
-    room.status = "lobby";
-    room.phaseEndsAt = 0;
-  }
 }
 
 /** 开始校验：仅房主、仅大厅、两人都在线 */
@@ -148,6 +215,18 @@ export function checkStart(room: Room, playerId: string): ErrorCode | null {
   if (room.hostId !== playerId) return "NOT_HOST";
   if (room.status !== "lobby") return "BAD_REQUEST";
   if (room.players.length < MAX_PLAYERS || room.players.some((p) => !p.connected)) return "NOT_READY";
+  return null;
+}
+
+/** 再来一局：只在结算页有效；两人都在线且都投票后进入倒计时 */
+export function voteRematch(room: Room, playerId: string): ErrorCode | null {
+  if (room.status !== "ended") return "BAD_REQUEST";
+  room.rematchVotes.add(playerId);
+  const ready =
+    room.players.length === MAX_PLAYERS &&
+    room.players.every((p) => p.connected && room.rematchVotes.has(p.id));
+  if (ready) startCountdown(room);
+  else hooks.room(room);
   return null;
 }
 
@@ -180,11 +259,13 @@ function startPlaying(room: Room) {
   }, 1000 / TICK_HZ);
 }
 
-export function finishRound(room: Room, reason: OverPayload["reason"]) {
+export function finishRound(room: Room, reason: OverPayload["reason"], forcedWinner?: string | null) {
   clearTimer(room);
   room.status = "ended";
   room.phaseEndsAt = 0;
+  room.rematchVotes.clear();
   room.lastOver = computeOver(room, reason);
+  if (forcedWinner !== undefined) room.lastOver.winnerId = forcedWinner;
   hooks.snapshot(room); // 最终棋盘
   hooks.over(room, room.lastOver);
   hooks.room(room);
@@ -214,6 +295,7 @@ export function sweepEmptyRooms(now = Date.now()) {
   for (const [code, room] of rooms) {
     if (room.players.length === 0 && room.emptySince !== null && now - room.emptySince > ROOM_EMPTY_TTL_MS) {
       clearTimer(room);
+      for (const p of room.players) if (p.graceTimer) clearTimeout(p.graceTimer);
       rooms.delete(code);
     }
   }

@@ -1,5 +1,5 @@
 import { ROUND_MS, type ErrorCode, type OverPayload, type PlayerPublic, type RoomInfo, type RoomQueryRes } from "../shared/protocol";
-import { GameView } from "./game";
+import { GameView, rememberPlayers, roster } from "./game";
 import { AUTOJOIN_KEY } from "./home";
 import { setInputPhase } from "./input";
 import { socket } from "./net";
@@ -18,6 +18,9 @@ interface RoomState {
 let cur: RoomState | null = null;
 let nav: (path: string) => void = () => {};
 
+// 重连凭证按房间存在 sessionStorage：同一标签页刷新后还在，不同标签页互不影响
+const tokenKey = (code: string) => `pr_token_${code}`;
+
 const goHome = () => {
   hideOverlay();
   leaveRoom();
@@ -31,8 +34,8 @@ export async function enterRoom(code: string, navigate: (path: string) => void) 
   document.title = `房间 ${code} · 抢地盘`;
   view.innerHTML = `<section class="card"><p class="muted">正在进入房间 ${esc(code)}…</p></section>`;
 
-  // 从首页创建或加入：直接入座
-  if (sessionStorage.getItem(AUTOJOIN_KEY) === code) {
+  // 从首页创建或加入、或者本标签页之前在这个房间里（刷新）：直接入座 / 恢复原座位
+  if (sessionStorage.getItem(AUTOJOIN_KEY) === code || sessionStorage.getItem(tokenKey(code))) {
     sessionStorage.removeItem(AUTOJOIN_KEY);
     return join();
   }
@@ -72,24 +75,27 @@ export function leaveRoom() {
 
 function join() {
   if (!cur) return;
-  socket.emit("join", { code: cur.code, name: getName() });
+  const token = sessionStorage.getItem(tokenKey(cur.code)) ?? undefined;
+  socket.emit("join", { code: cur.code, name: getName(), token });
 }
 
 function showRoomError(code: ErrorCode, msg?: string) {
   const map: Partial<Record<ErrorCode, [string, string]>> = {
     ROOM_NOT_FOUND: ["房间不存在", `房间 ${cur?.code ?? ""} 不存在或已解散，请确认链接是否正确。`],
     ROOM_FULL: ["房间已满", `房间 ${cur?.code ?? ""} 已经有两名玩家了。可以创建一个新房间，邀请好友来玩。`],
+    REPLACED: ["已在别处打开", "你在另一个标签页或窗口重新进入了这个房间，这个页面已断开。"],
   };
   const [title, text] = map[code] ?? ["出错了", msg ?? "未知错误"];
-  showOverlay(title, text, [{ label: "返回首页", primary: true, onClick: goHome }]);
+  if (cur && code !== "REPLACED") sessionStorage.removeItem(tokenKey(cur.code)); // 凭证已失效
   if (cur) cur.me = null;
+  showOverlay(title, text, [{ label: "返回首页", primary: true, onClick: goHome }]);
 }
 
 // ---- 服务器事件 ----
 socket.on("joined", (p) => {
   if (!cur || p.room.code !== cur.code) return;
   cur.me = p.playerId;
-  sessionStorage.setItem("pr_token", p.token); // 阶段 4 用于刷新重连
+  sessionStorage.setItem(tokenKey(cur.code), p.token);
   render(p.room);
 });
 
@@ -110,23 +116,21 @@ socket.on("over", (o) => {
 
 socket.on("error", (e) => {
   if (!cur) return;
-  if (e.code === "ROOM_NOT_FOUND" || e.code === "ROOM_FULL") showRoomError(e.code);
+  if (e.code === "ROOM_NOT_FOUND" || e.code === "ROOM_FULL" || e.code === "REPLACED") showRoomError(e.code);
   else toast(e.msg);
 });
 
-// 阶段 2 的简化：断线后服务器会移除座位，重连时重新加入（阶段 4 改为 token 恢复原座位）
+// 断线重连：服务器为我们保留座位 15 秒，带 token 重新 join 即可回到原座位
 socket.on("connect", () => {
-  if (cur?.me) {
-    cur.me = null;
-    join();
-  }
+  if (cur?.me) join();
 });
 
 // ---- 渲染 ----
 function render(room: RoomInfo) {
   if (!cur) return;
-  const prevStatus = cur.room?.status;
+  const prev = cur.room;
   cur.room = room;
+  rememberPlayers(room);
   cancelAnimationFrame(cur.raf);
   setInputPhase(room.status);
 
@@ -135,7 +139,13 @@ function render(room: RoomInfo) {
     renderLobby(room);
   } else renderGame(room);
 
-  if (prevStatus && prevStatus !== "lobby" && room.status === "lobby") toast("对手离开了，已回到大厅");
+  // 状态变化提示
+  const opp = room.players.find((p) => p.id !== cur!.me);
+  const prevOpp = prev?.players.find((p) => p.id === opp?.id);
+  if (prev?.status === "ended" && room.status === "lobby") toast("新对手加入了房间");
+  else if (opp && prevOpp?.connected && !opp.connected) toast("对手掉线了，15 秒内没回来就算对方离开");
+  else if (opp && prevOpp && !prevOpp.connected && opp.connected) toast("对手回来了");
+  else if (prev && prev.players.length === 2 && room.players.length === 1 && room.status === "lobby") toast("对手离开了房间");
 }
 
 function slotHtml(room: RoomInfo, slot: 1 | 2) {
@@ -187,7 +197,9 @@ function renderLobby(room: RoomInfo) {
 // ---- 对局视图：倒计时 / 对局中 / 结算 共用同一块棋盘 ----
 function hudSide(room: RoomInfo, slot: 1 | 2) {
   const p = room.players.find((x) => x.slot === slot);
-  const name = p ? esc(p.name) + (p.id === cur?.me ? "（你）" : "") : "—";
+  // 对手已离开（结算页）：用缓存里的昵称，标注"已离开"
+  const goneId = !p ? cur?.over?.scores.find((s) => roster.get(s.id)?.slot === slot)?.id : undefined;
+  const name = p ? esc(p.name) + (p.id === cur?.me ? "（你）" : "") : goneId ? `${esc(roster.get(goneId)!.name)}（已离开）` : "—";
   const off = p && !p.connected ? `<span class="state off">掉线中</span>` : "";
   const pct = `<b class="pct" id="pct${slot}">0%</b>`;
   return slot === 1
@@ -203,11 +215,28 @@ function resultHtml(room: RoomInfo, over: OverPayload | null) {
   const reason = over.reason === "opponent_left" ? "对手离开了对局" : "时间到";
   const rows = over.scores
     .map((s) => {
-      const p = room.players.find((x) => x.id === s.id);
-      return `<div class="srow p${p?.slot ?? 1}"><span class="swatch"></span><span class="pname">${esc(p?.name ?? "已离开")}</span><b>${s.pct}%</b><span class="muted">${s.cells} 格</span></div>`;
+      const p = room.players.find((x) => x.id === s.id) ?? roster.get(s.id);
+      const gone = !room.players.some((x) => x.id === s.id);
+      const name = (p?.name ?? "对手") + (gone ? "（已离开）" : "");
+      return `<div class="srow p${p?.slot ?? 2}"><span class="swatch"></span><span class="pname">${esc(name)}</span><b>${s.pct}%</b><span class="muted">${s.cells} 格</span></div>`;
     })
     .join("");
-  return `<div class="banner ${cls}"><p class="muted">${reason}</p><h2>${title}</h2>${rows}</div>`;
+  return `<div class="banner ${cls}"><p class="muted">${reason}</p><h2>${title}</h2>${rows}${rematchHtml(room)}</div>`;
+}
+
+function rematchHtml(room: RoomInfo) {
+  const me = cur?.me ?? "";
+  const opp = room.players.find((p) => p.id !== me);
+  if (!opp) {
+    return `<div class="rematch"><p class="muted">对手已离开。把邀请链接发给新朋友，对方加入后会回到大厅。</p>
+      <button id="copyLink">复制邀请链接</button></div>`;
+  }
+  const iVoted = room.rematchVotes.includes(me);
+  const oppVoted = room.rematchVotes.includes(opp.id);
+  const oppState = !opp.connected ? `<span class="tag off">对手掉线中</span>` : oppVoted ? `<span class="tag ready">对方已准备</span>` : "";
+  return `<div class="rematch">
+    <button id="rematch" class="primary" ${iVoted ? "disabled" : ""}>${iVoted ? "等待对方…" : "再来一局"}</button>${oppState}
+  </div>`;
 }
 
 function renderGame(room: RoomInfo) {
@@ -231,6 +260,21 @@ function renderGame(room: RoomInfo) {
     </section>`;
   st.game.mount($(".card.game"), room, st.me);
   $<HTMLButtonElement>("#leave").onclick = goHome;
+  const rm = document.getElementById("rematch") as HTMLButtonElement | null;
+  if (rm) rm.onclick = () => {
+    rm.disabled = true;
+    socket.emit("rematch");
+  };
+  const cp = document.getElementById("copyLink") as HTMLButtonElement | null;
+  if (cp) cp.onclick = async () => {
+    const link = `${location.origin}/r/${room.code}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      cp.textContent = "已复制";
+    } catch {
+      prompt("复制下面的邀请链接：", link);
+    }
+  };
   if (room.status === "ended") $("#timer").textContent = "0";
   if (room.status === "countdown") runCountdown(room);
 }

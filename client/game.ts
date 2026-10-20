@@ -9,6 +9,12 @@ const DARK: Record<number, string> = { 1: "#b8324a", 2: "#1b84b3" };
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
 
 /** 只负责"把服务器快照画出来"：不做任何规则计算 */
+/** 见过的玩家（id → 昵称、颜色槽位）。对手离开后，棋盘和结算仍能用他原来的颜色和昵称显示 */
+export const roster = new Map<string, { name: string; slot: 1 | 2 }>();
+export function rememberPlayers(room: RoomInfo) {
+  for (const p of room.players) roster.set(p.id, { name: p.name, slot: p.slot });
+}
+
 export class GameView {
   private prev: Snapshot | null = null;
   private cur: Snapshot | null = null;
@@ -62,7 +68,7 @@ export class GameView {
   }
 
   private slotOf(id: string) {
-    return this.room?.players.find((p) => p.id === id)?.slot ?? 1;
+    return this.room?.players.find((p) => p.id === id)?.slot ?? roster.get(id)?.slot ?? 1;
   }
 
   private draw() {

@@ -29,9 +29,11 @@ document.getElementById("logo")!.addEventListener("click", (e) => {
 
 // ---- 右上角连接状态 ----
 const net = document.getElementById("net")!;
+const banner = document.getElementById("netBanner")!;
 const setNet = (cls: string, txt: string) => {
   net.className = `net ${cls}`;
   net.querySelector(".txt")!.textContent = txt;
+  banner.hidden = cls === "ok";
 };
 socket.on("connect", () => setNet("ok", "已连接"));
 socket.on("disconnect", () => setNet("bad", "连接中断，正在重连…"));

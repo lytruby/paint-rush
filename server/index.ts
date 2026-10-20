@@ -13,11 +13,11 @@ import {
   type ServerToClientEvents,
 } from "../shared/protocol.js";
 import {
-  addPlayer,
-  checkJoin,
   checkStart,
   createRoom,
   hooks,
+  joinRoom,
+  markDisconnected,
   normalizeCode,
   removePlayer,
   rooms,
@@ -25,6 +25,7 @@ import {
   startCountdown,
   sweepEmptyRooms,
   toInfo,
+  voteRematch,
   type Room,
 } from "./rooms.js";
 import { handleInput, snapshot } from "./game.js";
@@ -40,6 +41,7 @@ const ERROR_MSG: Record<ErrorCode, string> = {
   NOT_HOST: "只有房主可以开始游戏",
   NOT_READY: "需要两名玩家都在线才能开始",
   BAD_REQUEST: "当前状态不允许该操作",
+  REPLACED: "你在另一个标签页或窗口重新进入了这个房间，当前页面已断开",
 };
 
 const app = express();
@@ -102,15 +104,16 @@ function currentRoom(socket: IOSocket): Room | undefined {
   return socket.data.code ? rooms.get(socket.data.code) : undefined;
 }
 
+/** 主动离开：立即释放座位（对局中会提前结算） */
 function leaveCurrentRoom(socket: IOSocket) {
   const room = currentRoom(socket);
   const playerId = socket.data.playerId;
-  if (room && playerId) {
+  if (room && playerId && room.players.find((p) => p.id === playerId)?.socketId === socket.id) {
     removePlayer(room, playerId);
-    socket.leave(room.code);
     broadcastRoom(room);
     console.log(`[room ${room.code}] ${playerId} left (players=${room.players.length})`);
   }
+  if (room) socket.leave(room.code);
   socket.data.code = undefined;
   socket.data.playerId = undefined;
 }
@@ -122,18 +125,31 @@ io.on("connection", (socket: IOSocket) => {
 
   socket.on("join", (payload) => {
     if (socket.data.playerId) return; // 一个连接只能在一个房间里
-    const code = normalizeCode(payload?.code);
-    const room = rooms.get(code);
-    const err = checkJoin(room);
-    if (err || !room) return sendError(socket, err ?? "ROOM_NOT_FOUND");
+    const room = rooms.get(normalizeCode(payload?.code));
+    const res = joinRoom(room, socket.id, sanitizeName(payload?.name), payload?.token);
+    if (!res.ok || !room) return sendError(socket, res.ok ? "ROOM_NOT_FOUND" : res.error);
+    const { player, resumed, replacedSocketId } = res;
 
-    const player = addPlayer(room, socket.id, sanitizeName(payload?.name));
+    // 重复连接：同一座位在新连接上恢复，踢掉旧连接（旧连接不再代表这个座位）
+    if (replacedSocketId) {
+      const old = io.sockets.sockets.get(replacedSocketId);
+      if (old) {
+        sendError(old, "REPLACED");
+        old.leave(room.code);
+        old.data.code = undefined;
+        old.data.playerId = undefined;
+      }
+    }
+
     socket.data.code = room.code;
     socket.data.playerId = player.id;
     socket.join(room.code);
     socket.emit("joined", { playerId: player.id, token: player.token, room: toInfo(room) });
+    // 重连时立即补发当前画面和结算结果，让视图直接回到当前阶段
+    if (room.status !== "lobby") socket.emit("snapshot", snapshot(room));
+    if (room.status === "ended" && room.lastOver) socket.emit("over", room.lastOver);
     broadcastRoom(room);
-    console.log(`[room ${room.code}] ${player.id} "${player.name}" joined slot ${player.slot}`);
+    console.log(`[room ${room.code}] ${player.id} "${player.name}" ${resumed ? "resumed" : "joined"} slot ${player.slot}`);
   });
 
   socket.on("start", () => {
@@ -147,14 +163,27 @@ io.on("connection", (socket: IOSocket) => {
 
   socket.on("input", (payload) => {
     const room = currentRoom(socket);
-    const player = room?.players.find((p) => p.id === socket.data.playerId);
+    const player = room?.players.find((p) => p.id === socket.data.playerId && p.socketId === socket.id);
     if (room && player) handleInput(room, player, payload);
+  });
+
+  socket.on("rematch", () => {
+    const room = currentRoom(socket);
+    if (!room || !socket.data.playerId) return sendError(socket, "BAD_REQUEST");
+    const err = voteRematch(room, socket.data.playerId);
+    if (err) sendError(socket, err);
   });
 
   socket.on("leave", () => leaveCurrentRoom(socket));
 
   socket.on("disconnect", () => {
-    leaveCurrentRoom(socket);
+    // 掉线（含刷新、关闭标签页、网络中断）：保留座位 15 秒，而不是立即移除
+    const room = currentRoom(socket);
+    const player = room?.players.find((p) => p.id === socket.data.playerId);
+    if (room && player && player.socketId === socket.id) {
+      markDisconnected(room, player.id);
+      console.log(`[room ${room.code}] ${player.id} disconnected (grace)`);
+    }
     io.emit("presence", { online: io.engine.clientsCount });
   });
 });
