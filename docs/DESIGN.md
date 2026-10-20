@@ -16,6 +16,7 @@
 
 - 阶段 1：重连凭证 token 从 localStorage 改为 **sessionStorage**（按标签页隔离，刷新后仍保留）。原因：面试官很可能在同一个浏览器里开两个标签页自测，如果用 localStorage，两个标签页会共用同一个 token，第二个标签页会把第一个挤掉。昵称仍存 localStorage。
 - 阶段 3：tick 从 12 Hz 改为 10 Hz（移动速度为每秒 10 格）；短按也至少走一格；碰撞规则对双方对称；倒计时期间就显示棋盘和出生点。
+- 阶段 4：错误码增加 `REPLACED`（同一座位在另一个标签页恢复时，旧页面收到它并显示"已在别处打开"）；对局中有人离开时，结算里仍保留离开者的分数；结算页只剩一人时，新玩家用同一链接加入后房间回到大厅；重连时服务器重置该座位的输入序号（新页面的 seq 从 1 开始）；掉线的玩家在大厅中同样保留 15 秒。
 - 阶段 2：`room` 消息增加 `phaseRemainingMs` 字段（倒计时和对局的剩余毫秒数），用于两端同步倒计时；错误码增加 `NOT_READY`（人没到齐时点开始）；通过邀请链接进入时，先显示"加入房间"确认卡片（可以修改昵称）。
 
 ---
@@ -148,7 +149,7 @@
 | `room` | `{ code, status, hostId, players[], round, rematchVotes[], phaseRemainingMs }` | 元数据变化时广播；phaseRemainingMs 为当前阶段剩余毫秒数 |
 | `snapshot` | `{ tick, status, remainingMs, players[{id,x,y,connected}], grid }` | 每秒 10 次全量广播（倒计时开始和结算时各补发一次）；客户端丢弃 tick 较旧的快照 |
 | `over` | `{ scores[{id,cells,pct}], winnerId \| null, reason: 'time' \| 'opponent_left' }` | 结算；winnerId 为 null 表示平局 |
-| `error` | `{ code, msg }` | 错误码：`ROOM_NOT_FOUND` / `ROOM_FULL` / `NOT_HOST` / `NOT_READY` / `BAD_REQUEST` |
+| `error` | `{ code, msg }` | 错误码：`ROOM_NOT_FOUND` / `ROOM_FULL` / `NOT_HOST` / `NOT_READY` / `BAD_REQUEST` / `REPLACED` |
 
 ### 4.4 同步与反作弊
 
