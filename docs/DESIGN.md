@@ -210,7 +210,7 @@
 | 客户端 | Vite、原生 TypeScript、Canvas 2D | 视图很少，不需要引入框架 |
 | 共享代码 | `shared/` 目录 | 存放协议类型和常量，前后端共用 |
 | 音效（P1） | Web Audio API | 不需要额外的素材文件 |
-| 部署 | 单实例的常驻 Node 服务，例如 Render、Railway 或 Fly.io | 平台必须支持 WebSocket 长连接，不能用 Vercel 这类 serverless 平台。如果选择会休眠的免费套餐，要在提交前唤醒服务，并在 README 中说明首次访问可能需要等待 |
+| 部署 | **已确定：Render**（新加坡区域，免费套餐，单实例，push 到 main 自动部署），地址 https://paint-rush.onrender.com | 平台必须支持 WebSocket 长连接，不能用 Vercel 这类 serverless 平台。如果选择会休眠的免费套餐，要在提交前唤醒服务，并在 README 中说明首次访问可能需要等待 |
 
 ---
 

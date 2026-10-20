@@ -13,6 +13,6 @@
 | 9 | 构建所需的工具（vite、typescript、tsx）放在 dependencies 中 | 部署平台在 NODE_ENV=production 下安装依赖时可能跳过 devDependencies，放在 dependencies 可以避免构建失败 |
 | 10 | 重连 token 存 sessionStorage，昵称存 localStorage（DESIGN.md 已同步更新） | 面试官很可能在同一个浏览器里开两个标签页自测；如果 token 用 localStorage，两个标签页会共用同一个座位并互相挤掉 |
 | 11 | 增加 `/healthz` 健康检查和 `npm run smoke` 冒烟脚本（双客户端强制走 WebSocket） | 部署平台需要健康检查；脚本提供可复制运行的验收命令，并能在公网验证 wss 是否可以穿透代理 |
-| 12 | 阶段 1 的"首次部署"使用沙箱临时公网 HTTPS 地址验证 | 正式平台（Render、Railway、Fly.io）需要用户账号，目前不可用；临时地址已经验证了 HTTPS 代理加 wss 这条链路，正式部署待用户确认 |
+| 12 | 阶段 1 的"首次部署"先用沙箱临时公网地址验证，随后正式部署到 Render：https://paint-rush.onrender.com | 先用临时地址打通 HTTPS 代理加 wss 链路，用户确认平台后再正式上线；正式地址已经替代临时地址 |
 | 13 | 正式部署平台定为 Render（用户确认），由 Agent 通过 Render 连接器（API key）创建服务、部署和查看日志；区域选新加坡，免费套餐，构建命令 `npm install && npm run build`，启动命令 `npm start` | 部署是风险最高的一环，Agent 能直接查看日志并排查问题，不需要用户转述；新加坡离用户最近 |
-| 14 | 代码托管在 GitHub 私有仓库 lytruby/paint-rush，按阶段提交并推送 | 用户确认使用 GitHub 连接器；默认私有，提交面试前再决定是否公开 |
+| 14 | 代码托管在 GitHub 公开仓库 lytruby/paint-rush，按阶段提交并推送；Render 服务 paint-rush（srv-dbbi07k9v7es73fagjag）开启自动部署，push 到 main 即自动上线 | 用户确认使用 GitHub 连接器，并选择公开仓库：Render 需要能读取仓库，面试官也需要能看到代码；自动部署让后续每个阶段推送后都能直接在正式地址验收 |
